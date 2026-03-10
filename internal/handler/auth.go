@@ -34,8 +34,8 @@ type credentialsRequest struct {
 	Password string `json:"password"`
 }
 
-// getClientIP extracts the client IP address from the request
-func getClientIP(r *http.Request) string {
+// GetClientIP extracts the client IP address from the request
+func GetClientIP(r *http.Request) string {
 	// Check X-Forwarded-For header first (for proxied requests)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		ips := strings.Split(xff, ",")
@@ -80,7 +80,7 @@ func NewLoginHandler(manager *auth.Manager, tokens *auth.TokenStore, repo *stora
 		}
 
 		username := strings.TrimSpace(payload.Username)
-		clientIP := getClientIP(r)
+		clientIP := GetClientIP(r)
 
 		// 检查速率限制
 		if rateLimiter != nil {

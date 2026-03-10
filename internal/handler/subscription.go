@@ -158,6 +158,11 @@ func newSubscriptionHandler(summary *TrafficSummaryHandler, repo *storage.Traffi
 }
 
 func (s *subscriptionEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if bfp := GetBruteForceProtector(); bfp != nil && bfp.IsBlocked(GetClientIP(r), r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+
 	request, ok := s.authorizeRequest(w, r)
 	if !ok {
 		return
@@ -202,6 +207,9 @@ func (s *subscriptionEndpoint) authorizeRequest(w http.ResponseWriter, r *http.R
 	}
 
 	// 所有认证方式都失败，设置token失效标记
+	if bfp := GetBruteForceProtector(); bfp != nil {
+		bfp.RecordFailure(GetClientIP(r), r.URL.Path)
+	}
 	ctx := context.WithValue(r.Context(), TokenInvalidKey, true)
 	return r.WithContext(ctx), true
 }
@@ -237,6 +245,9 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		subscribeFile, err = h.repo.GetSubscribeFileByFilename(r.Context(), filename)
 		if err != nil {
 			if errors.Is(err, storage.ErrSubscribeFileNotFound) {
+				if bfp := GetBruteForceProtector(); bfp != nil {
+					bfp.RecordFailure(GetClientIP(r), r.URL.Path)
+				}
 				writeError(w, http.StatusNotFound, errors.New("not found"))
 				return
 			}
@@ -252,6 +263,9 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		link, err := h.resolveSubscription(r.Context(), legacyName)
 		if err != nil {
 			if errors.Is(err, storage.ErrSubscriptionNotFound) {
+				if bfp := GetBruteForceProtector(); bfp != nil {
+					bfp.RecordFailure(GetClientIP(r), r.URL.Path)
+				}
 				writeError(w, http.StatusNotFound, err)
 				return
 			}
@@ -814,8 +828,12 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	)
 
 	// 更新静默模式活跃时间
+	clientIP := GetClientIP(r)
 	if silentMgr := GetSilentModeManager(); silentMgr != nil && username != "" {
-		silentMgr.RecordSubscriptionAccessWithIP(username, getClientIP(r))
+		silentMgr.RecordSubscriptionAccessWithIP(username, clientIP)
+	}
+	if bfp := GetBruteForceProtector(); bfp != nil {
+		bfp.RecordSuccess(clientIP)
 	}
 
 	logger.Info("[⏱️ 耗时监测] 请求处理完成", "total_duration_ms", time.Since(requestStart).Milliseconds(), "username", username, "filename", filename)

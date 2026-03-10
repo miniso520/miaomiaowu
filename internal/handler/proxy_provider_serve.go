@@ -104,6 +104,12 @@ func NewProxyProviderServeHandler(repo *storage.TrafficRepository) http.Handler 
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := GetClientIP(r)
+		if bfp := GetBruteForceProtector(); bfp != nil && bfp.IsBlocked(clientIP, r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
+
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 			return
@@ -135,6 +141,9 @@ func NewProxyProviderServeHandler(repo *storage.TrafficRepository) http.Handler 
 		// Validate user token and get username
 		username, err := repo.ValidateUserToken(r.Context(), token)
 		if err != nil || username == "" {
+			if bfp := GetBruteForceProtector(); bfp != nil {
+				bfp.RecordFailure(clientIP, r.URL.Path)
+			}
 			writeError(w, http.StatusUnauthorized, errors.New("invalid token"))
 			return
 		}
@@ -146,6 +155,9 @@ func NewProxyProviderServeHandler(repo *storage.TrafficRepository) http.Handler 
 			return
 		}
 		if config == nil || config.Username != username {
+			if bfp := GetBruteForceProtector(); bfp != nil {
+				bfp.RecordFailure(clientIP, r.URL.Path)
+			}
 			writeError(w, http.StatusNotFound, errors.New("proxy provider config not found"))
 			return
 		}
@@ -174,6 +186,9 @@ func NewProxyProviderServeHandler(repo *storage.TrafficRepository) http.Handler 
 			w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(entry.YAMLData)
+			if bfp := GetBruteForceProtector(); bfp != nil {
+				bfp.RecordSuccess(clientIP)
+			}
 			return
 		}
 
@@ -189,6 +204,9 @@ func NewProxyProviderServeHandler(repo *storage.TrafficRepository) http.Handler 
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(entry.YAMLData)
+		if bfp := GetBruteForceProtector(); bfp != nil {
+			bfp.RecordSuccess(clientIP)
+		}
 	})
 }
 

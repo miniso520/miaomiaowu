@@ -232,7 +232,7 @@ func (m *SilentModeManager) Middleware(next http.Handler) http.Handler {
 		}
 
 		username := m.extractUsername(r)
-		clientIP := getClientIP(r)
+		clientIP := GetClientIP(r)
 
 		// 检查用户是否在活跃期内（通过 token 识别）
 		if username != "" && m.isUserActive(username, cfg.SilentModeTimeout) {

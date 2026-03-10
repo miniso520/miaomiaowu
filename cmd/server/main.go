@@ -210,11 +210,24 @@ func main() {
 	// /t/{id} paths route to temporary subscription handler
 	// All other paths go to the web handler
 	shortLinkHandler := handler.NewShortLinkHandler(repo, subscriptionHandler)
+	bruteForceProtector := handler.NewBruteForceProtector()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.Trim(r.URL.Path, "/")
+		clientIP := handler.GetClientIP(r)
+
+		// 暴力探测封禁检查
+		if bruteForceProtector.IsBlocked(clientIP, r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
+
 		// Check if this is a temporary subscription access (starts with "t/" followed by 8 hex chars)
 		if strings.HasPrefix(path, "t/") && len(path) == 10 {
-			tempSubAccessHandler.ServeHTTP(w, r)
+			rec := &handler.StatusRecorder{ResponseWriter: w, StatusCode: 200}
+			tempSubAccessHandler.ServeHTTP(rec, r)
+			if rec.StatusCode == http.StatusNotFound || rec.StatusCode == http.StatusForbidden {
+				bruteForceProtector.RecordFailure(clientIP, r.URL.Path)
+			}
 			return
 		}
 		// 自定义短链接后, 订阅+用户最小为2个字符
@@ -223,6 +236,7 @@ func main() {
 			if shortLinkHandler.TryServe(w, r) {
 				return
 			}
+			bruteForceProtector.RecordFailure(clientIP, r.URL.Path)
 		}
 		// Otherwise, pass to web handler
 		web.Handler().ServeHTTP(w, r)
