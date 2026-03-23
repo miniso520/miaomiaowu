@@ -24,7 +24,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { parseProxyUrl, toClashProxy, type ProxyNode, type ClashProxy } from '@/lib/proxy-parser'
-import { load as parseYAML } from 'js-yaml'
+import { load as parseYAML, dump as dumpYAML } from 'js-yaml'
 import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import IpIcon from '@/assets/icons/ip.svg'
@@ -481,6 +481,9 @@ function NodesPage() {
   const [editingClashConfig, setEditingClashConfig] = useState<{ nodeId: number; config: string } | null>(null)
   const [clashConfigError, setClashConfigError] = useState<string>('')
   const [jsonErrorLines, setJsonErrorLines] = useState<number[]>([])
+  const [configFormat, setConfigFormat] = useState<'json' | 'yaml'>(() =>
+    (localStorage.getItem('nodeConfigFormat') as 'json' | 'yaml') || 'json'
+  )
 
   // URI 复制状态
   const [uriDialogOpen, setUriDialogOpen] = useState(false)
@@ -853,16 +856,18 @@ function NodesPage() {
 
     if (!clashConfig) return
 
-    // 格式化 JSON 以便编辑
+    // 根据当前格式偏好格式化
+    const fmt = (localStorage.getItem('nodeConfigFormat') as 'json' | 'yaml') || 'json'
     try {
       const parsed = JSON.parse(clashConfig)
-      const formatted = JSON.stringify(parsed, null, 2)
+      const formatted = fmt === 'yaml'
+        ? dumpYAML(parsed, { indent: 2, lineWidth: -1, noRefs: true })
+        : JSON.stringify(parsed, null, 2)
       setEditingClashConfig({
-        nodeId: 'id' in node && typeof node.id === 'number' ? node.id : -1, // 临时节点使用 -1
+        nodeId: 'id' in node && typeof node.id === 'number' ? node.id : -1,
         config: formatted
       })
     } catch {
-      // 如果解析失败，使用原始字符串
       setEditingClashConfig({
         nodeId: 'id' in node && typeof node.id === 'number' ? node.id : -1,
         config: clashConfig
@@ -878,8 +883,10 @@ function NodesPage() {
     if (!editingClashConfig) return
 
     try {
-      // 验证 JSON 格式
-      const parsedConfig = JSON.parse(editingClashConfig.config)
+      // 根据当前格式解析
+      const parsedConfig = configFormat === 'yaml'
+        ? parseYAML(editingClashConfig.config) as Record<string, unknown>
+        : JSON.parse(editingClashConfig.config)
 
       // 检查必需字段
       if (!parsedConfig.name || !parsedConfig.type || !parsedConfig.server || !parsedConfig.port) {
@@ -887,13 +894,14 @@ function NodesPage() {
         return
       }
 
-      // 保存配置（压缩格式，不带空格和换行）
+      // 保存配置（压缩 JSON 格式）
       updateClashConfigMutation.mutate({
         nodeId: editingClashConfig.nodeId,
         clashConfig: JSON.stringify(parsedConfig)
       })
     } catch (error) {
-      setClashConfigError(`JSON 格式错误: ${error instanceof Error ? error.message : String(error)}`)
+      const label = configFormat === 'yaml' ? 'YAML' : 'JSON'
+      setClashConfigError(`${label} 格式错误: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -906,37 +914,71 @@ function NodesPage() {
       config: value
     })
 
-    // 实时验证 JSON 格式
-    try {
-      JSON.parse(value)
-      setClashConfigError('')
-      setJsonErrorLines([])
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error)
-      setClashConfigError(`JSON 格式错误: ${errorMsg}`)
-
-      // 尝试提取错误行号
-      // JSON.parse 错误信息格式通常是 "Unexpected token ... in JSON at position ..."
-      // 我们需要根据position计算行号
-      if (error instanceof SyntaxError && errorMsg.includes('position')) {
-        const match = errorMsg.match(/position (\d+)/)
-        if (match) {
-          const position = parseInt(match[1], 10)
-          const lines = value.substring(0, position).split('\n')
-          const errorLine = lines.length
-
-          // 只有当错误是 "Expected ',' or '}'" 时，才同时标记错误行和上一行
-          // 因为这种错误通常是上一行缺少逗号导致的
-          const isMissingCommaError = errorMsg.includes("Expected ',' or '}'")
-          const errorLines = isMissingCommaError && errorLine > 1
-            ? [errorLine - 1, errorLine]
-            : [errorLine]
-          setJsonErrorLines(errorLines)
-        }
-      } else {
+    // 根据当前格式实时验证
+    if (configFormat === 'yaml') {
+      try {
+        parseYAML(value)
+        setClashConfigError('')
+        setJsonErrorLines([])
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        setClashConfigError(`YAML 格式错误: ${errorMsg}`)
         setJsonErrorLines([])
       }
+    } else {
+      try {
+        JSON.parse(value)
+        setClashConfigError('')
+        setJsonErrorLines([])
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        setClashConfigError(`JSON 格式错误: ${errorMsg}`)
+
+        if (error instanceof SyntaxError && errorMsg.includes('position')) {
+          const match = errorMsg.match(/position (\d+)/)
+          if (match) {
+            const position = parseInt(match[1], 10)
+            const lines = value.substring(0, position).split('\n')
+            const errorLine = lines.length
+            const isMissingCommaError = errorMsg.includes("Expected ',' or '}'")
+            const errorLines = isMissingCommaError && errorLine > 1
+              ? [errorLine - 1, errorLine]
+              : [errorLine]
+            setJsonErrorLines(errorLines)
+          }
+        } else {
+          setJsonErrorLines([])
+        }
+      }
     }
+  }
+
+  // 切换配置格式
+  const handleConfigFormatChange = (fmt: 'json' | 'yaml') => {
+    if (fmt === configFormat || !editingClashConfig) return
+
+    try {
+      // 解析当前格式
+      const parsed = configFormat === 'yaml'
+        ? parseYAML(editingClashConfig.config)
+        : JSON.parse(editingClashConfig.config)
+
+      // 转为目标格式
+      const converted = fmt === 'yaml'
+        ? dumpYAML(parsed, { indent: 2, lineWidth: -1, noRefs: true })
+        : JSON.stringify(parsed, null, 2)
+
+      setEditingClashConfig({ ...editingClashConfig, config: converted })
+      setClashConfigError('')
+      setJsonErrorLines([])
+    } catch {
+      // 转换失败不切换，提示用户先修正格式
+      setClashConfigError(`请先修正当前 ${configFormat === 'yaml' ? 'YAML' : 'JSON'} 格式错误后再切换`)
+      return
+    }
+
+    setConfigFormat(fmt)
+    localStorage.setItem('nodeConfigFormat', fmt)
   }
 
   // 复制 URI 到剪贴板
@@ -4850,6 +4892,24 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                       </DialogDescription>
                                     </DialogHeader>
                                     <div className='mt-4 flex-1 flex flex-col gap-3 min-h-0'>
+                                      <div className='flex gap-1'>
+                                        <Button
+                                          variant={configFormat === 'json' ? 'default' : 'outline'}
+                                          size='sm'
+                                          className='h-7 px-3 text-xs'
+                                          onClick={() => handleConfigFormatChange('json')}
+                                        >
+                                          JSON
+                                        </Button>
+                                        <Button
+                                          variant={configFormat === 'yaml' ? 'default' : 'outline'}
+                                          size='sm'
+                                          className='h-7 px-3 text-xs'
+                                          onClick={() => handleConfigFormatChange('yaml')}
+                                        >
+                                          YAML
+                                        </Button>
+                                      </div>
                                       <div className='flex-1 flex border rounded overflow-hidden bg-muted'>
                                         {/* 行号列 */}
                                         <div className='flex flex-col bg-muted-foreground/10 text-muted-foreground text-xs font-mono select-none py-3 px-2 text-right'>
@@ -4871,7 +4931,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                                           value={editingClashConfig?.config || ''}
                                           onChange={(e) => handleClashConfigChange(e.target.value)}
                                           className='font-mono text-xs flex-1 min-h-[400px] resize-none border-0 rounded-none focus-visible:ring-0 leading-5'
-                                          placeholder='输入 JSON 配置...'
+                                          placeholder={configFormat === 'yaml' ? '输入 YAML 配置...' : '输入 JSON 配置...'}
                                           readOnly={editingClashConfig?.nodeId === -1}
                                         />
                                       </div>
@@ -5331,6 +5391,24 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
             </DialogDescription>
           </DialogHeader>
           <div className='mt-4 flex-1 flex flex-col gap-3 min-h-0'>
+            <div className='flex gap-1'>
+              <Button
+                variant={configFormat === 'json' ? 'default' : 'outline'}
+                size='sm'
+                className='h-7 px-3 text-xs'
+                onClick={() => handleConfigFormatChange('json')}
+              >
+                JSON
+              </Button>
+              <Button
+                variant={configFormat === 'yaml' ? 'default' : 'outline'}
+                size='sm'
+                className='h-7 px-3 text-xs'
+                onClick={() => handleConfigFormatChange('yaml')}
+              >
+                YAML
+              </Button>
+            </div>
             <div className='flex-1 flex border rounded overflow-hidden bg-muted'>
               {/* 行号列 */}
               <div className='flex flex-col bg-muted-foreground/10 text-muted-foreground text-xs font-mono select-none py-3 px-2 text-right'>
@@ -5352,7 +5430,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                 value={editingClashConfig?.config || ''}
                 onChange={(e) => handleClashConfigChange(e.target.value)}
                 className='font-mono text-xs flex-1 min-h-[400px] resize-none border-0 rounded-none focus-visible:ring-0 leading-5'
-                placeholder='输入 JSON 配置...'
+                placeholder={configFormat === 'yaml' ? '输入 YAML 配置...' : '输入 JSON 配置...'}
                 readOnly={editingClashConfig?.nodeId === -1}
               />
             </div>
