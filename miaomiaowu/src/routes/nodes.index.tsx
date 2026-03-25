@@ -27,7 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { parseProxyUrl, toClashProxy, type ProxyNode, type ClashProxy } from '@/lib/proxy-parser'
 import { load as parseYAML, dump as dumpYAML } from 'js-yaml'
-import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List } from 'lucide-react'
+import { Check, Pencil, X, Undo2, Activity, Eye, Copy, ChevronDown, Link2, Flag, GripVertical, Zap, Loader2, Expand, List, ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import IpIcon from '@/assets/icons/ip.svg'
 import ExchangeIcon from '@/assets/icons/exchange.svg'
@@ -456,6 +456,7 @@ function NodesPage() {
   // 虚拟滚动模式状态 - 从 localStorage 恢复，无缓存时先默认 virtual（后续根据节点数调整）
   const [renderMode, setRenderMode] = useState<RenderMode>(() => getStoredRenderMode() ?? 'virtual')
   const [renderModeInitialized, setRenderModeInitialized] = useState(() => getStoredRenderMode() !== null)
+  const [sortMode, setSortMode] = useState(false)
   const virtualListRef = useRef<HTMLDivElement>(null)
   const tableVirtualListRef = useRef<HTMLDivElement>(null)
 
@@ -2437,6 +2438,50 @@ function NodesPage() {
     setBatchDraggingIds(new Set())
   }, [])
 
+  // 节点排序快捷操作：置顶/置底/上移/下移，支持单节点和批量
+  const handleMoveNodes = useCallback((direction: 'top' | 'bottom' | 'up' | 'down', targetIds?: Set<number>) => {
+    const ids = targetIds || selectedNodeIds
+    if (ids.size === 0) return
+
+    const currentOrder = [...nodeOrder]
+    // 确保所有已保存节点都在 order 中
+    const allSavedIds = savedNodes.map(n => n.id)
+    const orderSet = new Set(currentOrder)
+    for (const id of allSavedIds) {
+      if (!orderSet.has(id)) currentOrder.push(id)
+    }
+
+    const movingIds = new Set(ids)
+    const movingItems = currentOrder.filter(id => movingIds.has(id))
+    const restItems = currentOrder.filter(id => !movingIds.has(id))
+
+    let newOrder: number[]
+    if (direction === 'top') {
+      newOrder = [...movingItems, ...restItems]
+    } else if (direction === 'bottom') {
+      newOrder = [...restItems, ...movingItems]
+    } else if (direction === 'up') {
+      // 找到选中节点块在原 order 中的最小索引
+      const firstIdx = currentOrder.findIndex(id => movingIds.has(id))
+      if (firstIdx <= 0) return
+      // 将选中节点整体上移一位：插入到 firstIdx-1 的位置
+      const insertBefore = currentOrder[firstIdx - 1]
+      const insertIdx = restItems.indexOf(insertBefore)
+      newOrder = [...restItems.slice(0, insertIdx), ...movingItems, ...restItems.slice(insertIdx)]
+    } else {
+      // down: 找到选中节点块在原 order 中的最大索引
+      const lastIdx = currentOrder.length - 1 - [...currentOrder].reverse().findIndex(id => movingIds.has(id))
+      if (lastIdx >= currentOrder.length - 1) return
+      // 将选中节点整体下移一位：插入到 lastIdx+1 之后
+      const insertAfter = currentOrder[lastIdx + 1]
+      const insertIdx = restItems.indexOf(insertAfter)
+      newOrder = [...restItems.slice(0, insertIdx + 1), ...movingItems, ...restItems.slice(insertIdx + 1)]
+    }
+
+    setNodeOrder(newOrder)
+    updateNodeOrderMutation.mutate(newOrder)
+  }, [selectedNodeIds, nodeOrder, savedNodes, updateNodeOrderMutation])
+
   const filteredNodes = useMemo(() => {
     let nodes = displayNodes
 
@@ -3102,11 +3147,23 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                         )}
                       </DndContext>
                       </div>
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        onClick={() => setRenderMode(m => m === 'virtual' ? 'expanded' : 'virtual')}
-                      >
+                      <div className='flex gap-2'>
+                        <Button
+                          variant={sortMode ? 'default' : 'outline'}
+                          size='sm'
+                          onClick={() => {
+                            setSortMode(m => !m)
+                            if (sortMode) setSelectedNodeIds(new Set())
+                          }}
+                        >
+                          <ArrowUpDown className='size-3.5 mr-1' />
+                          排序模式
+                        </Button>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => setRenderMode(m => m === 'virtual' ? 'expanded' : 'virtual')}
+                        >
                         {renderMode === 'virtual' ? (
                           <>
                             <Expand className='size-3.5 mr-1' />
@@ -3119,6 +3176,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                           </>
                         )}
                       </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -6230,6 +6288,50 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 底部悬浮批量排序栏 */}
+      {sortMode && selectedNodeIds.size > 0 && (
+        <div className='fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-background/95 backdrop-blur border shadow-lg rounded-lg px-4 py-2 flex items-center gap-3'>
+          <span className='text-sm text-muted-foreground whitespace-nowrap'>已选 {selectedNodeIds.size} 个节点</span>
+          <div className='flex items-center gap-0.5 border rounded-md px-0.5'>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('top')}>
+                  <ArrowUpToLine className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>置顶</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('up')}>
+                  <ArrowUp className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>上移</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('down')}>
+                  <ArrowDown className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>下移</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' className='h-8 w-8' onClick={() => handleMoveNodes('bottom')}>
+                  <ArrowDownToLine className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side='top'>置底</TooltipContent>
+            </Tooltip>
+          </div>
+          <Button variant='ghost' size='icon' className='h-8 w-8 text-muted-foreground' onClick={() => { setSortMode(false); setSelectedNodeIds(new Set()) }}>
+            <X className='size-4' />
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
