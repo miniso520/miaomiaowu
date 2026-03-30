@@ -9,6 +9,7 @@ import (
 	"miaomiaowu/internal/logger"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -105,6 +106,52 @@ func decodeProxyURLFields(proxy map[string]any) {
 	if servername, ok := proxy["servername"].(string); ok {
 		proxy["servername"] = safeURLDecode(servername)
 	}
+}
+
+func applyNodeNameFilterToClashProxies(proxies []map[string]any, filterRegex *regexp.Regexp, filterPattern string) ([]map[string]any, int) {
+	if filterRegex == nil || len(proxies) == 0 {
+		return proxies, 0
+	}
+
+	proxyAny := make([]any, 0, len(proxies))
+	for _, proxy := range proxies {
+		proxyAny = append(proxyAny, proxy)
+	}
+
+	filteredAny, filteredCount := applyNodeNameFilterToProxies(proxyAny, filterRegex, filterPattern)
+	filteredProxies := make([]map[string]any, 0, len(filteredAny))
+	for _, proxy := range filteredAny {
+		if proxyMap, ok := proxy.(map[string]any); ok {
+			filteredProxies = append(filteredProxies, proxyMap)
+		}
+	}
+
+	return filteredProxies, filteredCount
+}
+
+func applyNodeNameFilterToV2rayURIs(uris []string, filterRegex *regexp.Regexp, filterPattern string) ([]string, int) {
+	if filterRegex == nil || len(uris) == 0 {
+		return uris, 0
+	}
+
+	filteredURIs := make([]string, 0, len(uris))
+	filteredCount := 0
+
+	for _, uri := range uris {
+		proxy, err := ParseProxyURL(uri)
+		if err == nil {
+			if proxyName, ok := proxy["name"].(string); ok {
+				if filterRegex.MatchString(proxyName) {
+					filteredCount++
+					logger.Info("[订阅获取] 过滤v2ray节点", "name", proxyName, "pattern", filterPattern)
+					continue
+				}
+			}
+		}
+		filteredURIs = append(filteredURIs, uri)
+	}
+
+	return filteredURIs, filteredCount
 }
 
 type nodesHandler struct {
@@ -1016,6 +1063,24 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 		userAgent = "clash-meta/2.4.0"
 	}
 
+	nodeNameFilter := defaultNodeNameFilterPattern
+	userSettings, settingsErr := h.repo.GetUserSettings(r.Context(), username)
+	if settingsErr != nil {
+		logger.Info("[订阅获取] 获取用户设置失败，使用默认节点名称过滤规则", "user", username, "error", settingsErr)
+	} else if strings.TrimSpace(userSettings.NodeNameFilter) != "" {
+		nodeNameFilter = strings.TrimSpace(userSettings.NodeNameFilter)
+	}
+
+	var filterRegex *regexp.Regexp
+	if nodeNameFilter != "" {
+		compiled, compileErr := regexp.Compile(nodeNameFilter)
+		if compileErr != nil {
+			logger.Info("[订阅获取] 节点名称过滤正则表达式无效，跳过过滤", "pattern", nodeNameFilter, "error", compileErr)
+		} else {
+			filterRegex = compiled
+		}
+	}
+
 	// 创建HTTP客户端并获取订阅内容
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -1148,12 +1213,18 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 			return
 		}
 
-		logger.Info("[订阅获取] v2ray格式解析成功", "url", req.URL, "uri_count", len(uris))
+		filteredURIs, filteredCount := applyNodeNameFilterToV2rayURIs(uris, filterRegex, nodeNameFilter)
+		if filteredCount > 0 {
+			logger.Info("[订阅获取] v2ray节点过滤完成", "filtered_count", filteredCount, "remaining_count", len(filteredURIs))
+		}
+
+		logger.Info("[订阅获取] v2ray格式解析成功", "url", req.URL, "uri_count", len(filteredURIs))
 		response := map[string]any{
-			"format":        "v2ray",
-			"uris":          uris,
-			"count":         len(uris),
-			"suggested_tag": suggestedTag,
+			"format":         "v2ray",
+			"uris":           filteredURIs,
+			"count":          len(filteredURIs),
+			"filtered_count": filteredCount,
+			"suggested_tag":  suggestedTag,
 		}
 		// 添加流量信息（如果有）
 		if trafficTotal > 0 {
@@ -1205,10 +1276,16 @@ func (h *nodesHandler) handleFetchSubscription(w http.ResponseWriter, r *http.Re
 		decodeProxyURLFields(proxy)
 	}
 
+	filteredProxies, filteredCount := applyNodeNameFilterToClashProxies(clashConfig.Proxies, filterRegex, nodeNameFilter)
+	if filteredCount > 0 {
+		logger.Info("[订阅获取] clash节点过滤完成", "filtered_count", filteredCount, "remaining_count", len(filteredProxies))
+	}
+
 	response := map[string]any{
-		"proxies":       clashConfig.Proxies,
-		"count":         len(clashConfig.Proxies),
-		"suggested_tag": suggestedTag,
+		"proxies":        filteredProxies,
+		"count":          len(filteredProxies),
+		"filtered_count": filteredCount,
+		"suggested_tag":  suggestedTag,
 	}
 	// 添加流量信息（如果有）
 	if trafficTotal > 0 {

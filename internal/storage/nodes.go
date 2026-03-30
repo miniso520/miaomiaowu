@@ -323,6 +323,38 @@ func (r *TrafficRepository) DeleteNode(ctx context.Context, id int64, username s
 	return nil
 }
 
+// DeleteNodeForSync removes a node without triggering external subscription cleanup.
+// This is intended for internal sync workflows that need to prune nodes safely.
+func (r *TrafficRepository) DeleteNodeForSync(ctx context.Context, id int64, username string) error {
+	if r == nil || r.db == nil {
+		return errors.New("traffic repository not initialized")
+	}
+
+	if id <= 0 {
+		return errors.New("node id is required")
+	}
+
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("username is required")
+	}
+
+	res, err := r.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ? AND username = ?`, id, username)
+	if err != nil {
+		return fmt.Errorf("delete node for sync: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("node delete for sync rows affected: %w", err)
+	}
+	if affected == 0 {
+		return ErrNodeNotFound
+	}
+
+	return nil
+}
+
 // BatchCreateNodes creates multiple nodes in a single transaction.
 func (r *TrafficRepository) BatchCreateNodes(ctx context.Context, nodes []Node) ([]Node, error) {
 	if r == nil || r.db == nil {

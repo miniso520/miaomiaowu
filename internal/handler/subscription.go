@@ -1098,6 +1098,9 @@ func syncReferencedExternalSubscriptions(ctx context.Context, repo *storage.Traf
 	if err != nil {
 		// If settings not found, use default match rule
 		userSettings.MatchRule = "node_name"
+		userSettings.SyncScope = "saved_only"
+		userSettings.KeepNodeName = true
+		userSettings.NodeNameFilter = defaultNodeNameFilterPattern
 	}
 
 	logger.Info("[Subscription] 用户需要同步的外部订阅", "user", username, "count", len(subsToSync), "match_rule", userSettings.MatchRule)
