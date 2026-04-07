@@ -448,6 +448,7 @@ function NodesPage() {
   const [resolvingIpFor, setResolvingIpFor] = useState<string | null>(null) // 正在解析IP的节点ID
   const [ipMenuState, setIpMenuState] = useState<{ nodeId: string; ips: string[] } | null>(null) // IP选择菜单状态
   const [probeBindingDialogOpen, setProbeBindingDialogOpen] = useState(false)
+  const [probeSearchQuery, setProbeSearchQuery] = useState('')
   const [selectedNodeForProbe, setSelectedNodeForProbe] = useState<ParsedNode | null>(null)
   const [exchangeDialogOpen, setExchangeDialogOpen] = useState(false)
   const [sourceNodeForExchange, setSourceNodeForExchange] = useState<ParsedNode | null>(null)
@@ -5638,7 +5639,10 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
       </AlertDialog>
 
       {/* 探针绑定对话框 */}
-      <Dialog open={probeBindingDialogOpen} onOpenChange={setProbeBindingDialogOpen}>
+      <Dialog open={probeBindingDialogOpen} onOpenChange={(open) => {
+        setProbeBindingDialogOpen(open)
+        if (!open) setProbeSearchQuery('')
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>绑定探针服务器</DialogTitle>
@@ -5649,7 +5653,16 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
           <div className='space-y-4 py-4'>
             {probeConfig?.servers && probeConfig.servers.length > 0 ? (
               <div className='space-y-2'>
-                {probeConfig.servers.map((server) => (
+                <Input
+                  placeholder='搜索服务器...'
+                  value={probeSearchQuery}
+                  onChange={(e) => setProbeSearchQuery(e.target.value)}
+                  className='text-sm'
+                />
+                <div className='max-h-[300px] overflow-y-auto space-y-2 pr-1'>
+                {probeConfig.servers
+                  .filter((s) => !probeSearchQuery || s.name.toLowerCase().includes(probeSearchQuery.toLowerCase()) || s.server_id.toLowerCase().includes(probeSearchQuery.toLowerCase()))
+                  .map((server) => (
                   <Button
                     key={server.id}
                     variant={selectedNodeForProbe?.probe_server === server.name ? 'default' : 'outline'}
@@ -5673,6 +5686,7 @@ vless://uuid@example.com:443?type=ws&security=tls&path=/websocket#VLESS节点
                     </div>
                   </Button>
                 ))}
+                </div>
                 {selectedNodeForProbe?.probe_server && (
                   <Button
                     variant='ghost'
