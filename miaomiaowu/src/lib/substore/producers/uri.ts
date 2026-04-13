@@ -527,7 +527,7 @@ export default function URI_Producer(): Producer {
                 let trojanSid = '';
                 let trojanPbk = '';
                 let trojanSpx = '';
-                let trojanSecurity = '';
+                let trojanSecurity = '&security=none';
                 let trojanMode = '';
                 let trojanExtra = '';
                 if (trojanIsReality) {
