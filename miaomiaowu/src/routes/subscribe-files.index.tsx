@@ -1703,7 +1703,7 @@ function SubscribeFilesPage() {
       setConfigContent(finalConfig)
 
       // 更新查询缓存
-      queryClient.setQueryData(['nodes-config', editingNodesFile?.id], {
+      queryClient.setQueryData(['nodes-config-content', editingNodesFile?.filename], {
         content: finalConfig
       })
 
@@ -2236,6 +2236,10 @@ function SubscribeFilesPage() {
         // 没有缺失节点，直接应用
         // 更新编辑配置对话框中的内容
         setConfigContent(newContent)
+        // 同步更新 nodesConfigQuery 缓存，防止重新打开对话框时回退到旧数据
+        queryClient.setQueryData(['nodes-config-content', editingNodesFile?.filename], {
+          content: newContent
+        })
         // 只关闭编辑节点对话框，不保存到文件
         setEditNodesDialogOpen(false)
         if (editingNodesFile) {
@@ -2323,7 +2327,7 @@ function SubscribeFilesPage() {
           setConfigContent(newContent)
 
           // 更新 nodesConfigQuery 的缓存
-          queryClient.setQueryData(['nodes-config', editingNodesFile?.id], {
+          queryClient.setQueryData(['nodes-config-content', editingNodesFile?.filename], {
             content: newContent
           })
         }
