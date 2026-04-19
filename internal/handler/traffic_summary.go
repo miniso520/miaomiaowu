@@ -1411,7 +1411,7 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 // HandleSubscribeTraffic returns traffic data for subscribe files that have
-// traffic_limit or stats_server_ids configured.
+// traffic_limit or stats_server_ids configured, plus the overall probe totals.
 func (h *TrafficSummaryHandler) HandleSubscribeTraffic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, errors.New("only GET is supported"))
@@ -1426,12 +1426,22 @@ func (h *TrafficSummaryHandler) HandleSubscribeTraffic(w http.ResponseWriter, r 
 	}
 
 	type subTraffic struct {
-		ID       int64   `json:"id"`
-		LimitGB  float64 `json:"limit_gb"`
-		UsedGB   float64 `json:"used_gb"`
+		ID      int64   `json:"id"`
+		LimitGB float64 `json:"limit_gb"`
+		UsedGB  float64 `json:"used_gb"`
 	}
 
-	var results []subTraffic
+	type probeTotal struct {
+		LimitGB float64 `json:"limit_gb"`
+		UsedGB  float64 `json:"used_gb"`
+	}
+
+	type response struct {
+		Items      []subTraffic `json:"items"`
+		ProbeTotal *probeTotal  `json:"probe_total,omitempty"`
+	}
+
+	var items []subTraffic
 
 	for _, f := range files {
 		if f.TrafficLimit == nil && f.StatsServerIDs == "" {
@@ -1453,19 +1463,29 @@ func (h *TrafficSummaryHandler) HandleSubscribeTraffic(w http.ResponseWriter, r 
 			}
 		} else if f.TrafficLimit != nil {
 			limitBytes = int64(*f.TrafficLimit * bytesPerGigabyte)
-			// 已用流量使用全部探针
 			_, _, totalUsed, probeErr := h.fetchTotals(ctx, "", nil)
 			if probeErr == nil {
 				usedBytes = totalUsed
 			}
 		}
 
-		results = append(results, subTraffic{
+		items = append(items, subTraffic{
 			ID:      f.ID,
 			LimitGB: roundUpTwoDecimals(bytesToGigabytes(limitBytes)),
 			UsedGB:  roundUpTwoDecimals(bytesToGigabytes(usedBytes)),
 		})
 	}
 
-	respondJSON(w, http.StatusOK, results)
+	resp := response{Items: items}
+
+	// Fetch probe total traffic as default
+	probeLimit, _, probeUsed, probeErr := h.fetchTotals(ctx, "", nil)
+	if probeErr == nil {
+		resp.ProbeTotal = &probeTotal{
+			LimitGB: roundUpTwoDecimals(bytesToGigabytes(probeLimit)),
+			UsedGB:  roundUpTwoDecimals(bytesToGigabytes(probeUsed)),
+		}
+	}
+
+	respondJSON(w, http.StatusOK, resp)
 }

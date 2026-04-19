@@ -493,7 +493,15 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	probeBindingEnabled := false             // 是否开启了探针服务器绑定
 	var usedProbeServers map[string]struct{} // 订阅文件中使用的探针服务器列表
 
-	if username != "" && h.repo != nil {
+	// 读取系统配置，判断是否启用订阅响应头流量信息
+	enableSubTrafficHeader := true
+	if h.repo != nil {
+		if sysConfig, cfgErr := h.repo.GetSystemConfig(r.Context()); cfgErr == nil {
+			enableSubTrafficHeader = sysConfig.EnableSubTrafficHeader
+		}
+	}
+
+	if enableSubTrafficHeader && username != "" && h.repo != nil {
 		settings, err := h.repo.GetUserSettings(r.Context(), username)
 		if err == nil {
 			probeBindingEnabled = settings.EnableProbeBinding
@@ -696,10 +704,14 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	// 流量统计获取
 	stepStart = time.Now()
-	// 尝试获取流量信息，如果探针报错则跳过流量统计，不影响订阅输出
-	// 如果开启了探针绑定，只统计订阅文件中使用的节点绑定的探针服务器流量
-	totalLimit, _, totalUsed, err := h.summary.fetchTotals(r.Context(), username, usedProbeServers)
-	hasTrafficInfo := err == nil
+	var totalLimit, totalUsed int64
+	hasTrafficInfo := false
+	if enableSubTrafficHeader {
+		// 尝试获取流量信息，如果探针报错则跳过流量统计，不影响订阅输出
+		// 如果开启了探针绑定，只统计订阅文件中使用的节点绑定的探针服务器流量
+		totalLimit, _, totalUsed, err = h.summary.fetchTotals(r.Context(), username, usedProbeServers)
+		hasTrafficInfo = err == nil
+	}
 	logger.Info("[⏱️ 耗时监测] 流量统计获取完成", "step", "traffic_fetch", "duration_ms", time.Since(stepStart).Milliseconds())
 
 	// 使用订阅名称
@@ -809,8 +821,8 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	logger.Info("[⏱️ 耗时监测] YAML 重排序完成", "step", "yaml_reorder", "duration_ms", time.Since(stepStart).Milliseconds())
 
 	w.Header().Set("Content-Type", contentType)
-	// 只有在有流量信息时才添加 subscription-userinfo 头
-	if hasTrafficInfo || externalTrafficLimit > 0 {
+	// 只有在启用了订阅流量响应头且有流量信息时才添加 subscription-userinfo 头
+	if enableSubTrafficHeader && (hasTrafficInfo || externalTrafficLimit > 0) {
 		var finalLimit, finalUsed int64
 
 		if hasSubscribeFile && subscribeFile.StatsServerIDs != "" {

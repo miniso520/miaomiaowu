@@ -33,6 +33,7 @@ type userConfigRequest struct {
 	EnableSubInfoNodes      bool    `json:"enable_sub_info_nodes"`     // Enable subscription info nodes
 	SubInfoExpirePrefix     string  `json:"sub_info_expire_prefix"`    // Prefix for expire time node
 	SubInfoTrafficPrefix    string  `json:"sub_info_traffic_prefix"`   // Prefix for remaining traffic node
+	EnableSubTrafficHeader  bool    `json:"enable_sub_traffic_header"` // Enable subscription-userinfo response header
 }
 
 type userConfigResponse struct {
@@ -56,6 +57,7 @@ type userConfigResponse struct {
 	EnableSubInfoNodes      bool    `json:"enable_sub_info_nodes"`     // Enable subscription info nodes
 	SubInfoExpirePrefix     string  `json:"sub_info_expire_prefix"`    // Prefix for expire time node
 	SubInfoTrafficPrefix    string  `json:"sub_info_traffic_prefix"`   // Prefix for remaining traffic node
+	EnableSubTrafficHeader  bool    `json:"enable_sub_traffic_header"` // Enable subscription-userinfo response header
 }
 
 func NewUserConfigHandler(repo *storage.TrafficRepository) http.Handler {
@@ -114,6 +116,7 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 				EnableSubInfoNodes:      systemConfig.EnableSubInfoNodes,
 				SubInfoExpirePrefix:     systemConfig.SubInfoExpirePrefix,
 				SubInfoTrafficPrefix:    systemConfig.SubInfoTrafficPrefix,
+				EnableSubTrafficHeader:  systemConfig.EnableSubTrafficHeader,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -145,6 +148,7 @@ func handleGetUserConfig(w http.ResponseWriter, r *http.Request, repo *storage.T
 		EnableSubInfoNodes:      systemConfig.EnableSubInfoNodes,
 		SubInfoExpirePrefix:     systemConfig.SubInfoExpirePrefix,
 		SubInfoTrafficPrefix:    systemConfig.SubInfoTrafficPrefix,
+		EnableSubTrafficHeader:  systemConfig.EnableSubTrafficHeader,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -245,6 +249,7 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		SubInfoExpirePrefix:     subInfoExpirePrefix,
 		SubInfoTrafficPrefix:    subInfoTrafficPrefix,
 		EnableShortLink:         payload.EnableShortLink,
+		EnableSubTrafficHeader:  payload.EnableSubTrafficHeader,
 	}
 	if err := repo.UpdateSystemConfig(r.Context(), systemConfig); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("update system config: %w", err))
@@ -272,6 +277,7 @@ func handleUpdateUserConfig(w http.ResponseWriter, r *http.Request, repo *storag
 		EnableSubInfoNodes:      payload.EnableSubInfoNodes,
 		SubInfoExpirePrefix:     subInfoExpirePrefix,
 		SubInfoTrafficPrefix:    subInfoTrafficPrefix,
+		EnableSubTrafficHeader:  payload.EnableSubTrafficHeader,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
