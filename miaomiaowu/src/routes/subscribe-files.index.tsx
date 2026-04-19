@@ -433,25 +433,29 @@ function SubscribeFilesPage() {
 
   const files = filesData?.files ?? []
 
-  // 获取订阅流量数据（仅针对配置了 traffic_limit 或 stats_server_ids 的订阅）
+  // 获取订阅流量数据（含探针总流量）
   const { data: subscribeTrafficData } = useQuery({
     queryKey: ['subscribe-traffic'],
     queryFn: async () => {
       const response = await api.get('/api/traffic/subscribe')
-      return response.data as Array<{ id: number; limit_gb: number; used_gb: number }>
+      return response.data as {
+        items: Array<{ id: number; limit_gb: number; used_gb: number }>
+        probe_total?: { limit_gb: number; used_gb: number }
+      }
     },
-    enabled: Boolean(auth.accessToken) && files.some(f => f.traffic_limit != null || f.stats_server_ids),
+    enabled: Boolean(auth.accessToken),
     refetchInterval: 5 * 60 * 1000,
   })
   const subscribeTrafficMap = useMemo(() => {
     const map = new Map<number, { limit_gb: number; used_gb: number }>()
-    if (subscribeTrafficData) {
-      for (const item of subscribeTrafficData) {
+    if (subscribeTrafficData?.items) {
+      for (const item of subscribeTrafficData.items) {
         map.set(item.id, item)
       }
     }
     return map
   }, [subscribeTrafficData])
+  const probeTotal = subscribeTrafficData?.probe_total
 
   // 获取 V3 模板列表
   const { data: templatesData } = useQuery({
@@ -3105,41 +3109,136 @@ function SubscribeFilesPage() {
                     header: '流量',
                     cell: (file) => {
                       const traffic = subscribeTrafficMap.get(file.id)
-                      if (!traffic || traffic.limit_gb === 0) {
-                        return <span className='text-muted-foreground'>-</span>
-                      }
-                      const percentage = Math.min((traffic.used_gb / traffic.limit_gb) * 100, 100)
-                      const remainingGB = Math.max(traffic.limit_gb - traffic.used_gb, 0)
-                      return (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className='w-20 space-y-1 cursor-help'>
-                              <Progress value={percentage} className='h-2' />
-                              <div className='text-xs text-center text-muted-foreground'>
-                                {percentage.toFixed(0)}%
+                      const isCustom = file.traffic_limit != null || !!file.stats_server_ids
+                      const displayTraffic = traffic || (probeTotal && probeTotal.limit_gb > 0 ? probeTotal : null)
+
+                      const progressBar = (() => {
+                        if (!displayTraffic || displayTraffic.limit_gb === 0) {
+                          return <span className='text-muted-foreground text-xs'>未配置探针</span>
+                        }
+                        const percentage = Math.min((displayTraffic.used_gb / displayTraffic.limit_gb) * 100, 100)
+                        const remainingGB = Math.max(displayTraffic.limit_gb - displayTraffic.used_gb, 0)
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className='w-20 space-y-1 cursor-pointer'>
+                                <Progress value={percentage} className='h-2' />
+                                <div className='text-xs text-center text-muted-foreground'>
+                                  {percentage.toFixed(0)}%{!isCustom && ' (默认)'}
+                                </div>
                               </div>
+                            </TooltipTrigger>
+                            <TooltipContent className='space-y-1'>
+                              <div className='text-xs'>
+                                <span className='font-medium'>已用: </span>
+                                {displayTraffic.used_gb.toFixed(2)} GB
+                              </div>
+                              <div className='text-xs'>
+                                <span className='font-medium'>总量: </span>
+                                {displayTraffic.limit_gb.toFixed(2)} GB
+                              </div>
+                              <div className='text-xs'>
+                                <span className='font-medium'>剩余: </span>
+                                {remainingGB.toFixed(2)} GB
+                              </div>
+                              {!isCustom && <div className='text-xs text-muted-foreground'>点击可设置独立流量</div>}
+                            </TooltipContent>
+                          </Tooltip>
+                        )
+                      })()
+
+                      let trafficInputRef: HTMLInputElement | null = null
+
+                      return (
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <div className='cursor-pointer'>{progressBar}</div>
+                          </PopoverTrigger>
+                          <PopoverContent className='w-72 space-y-3' align='center'>
+                            <div className='space-y-1'>
+                              <Label className='text-xs'>总流量上限（GB）</Label>
+                              <Input
+                                type='number'
+                                min='0'
+                                step='0.01'
+                                placeholder='留空则使用探针总流量'
+                                defaultValue={file.traffic_limit != null ? String(file.traffic_limit) : ''}
+                                ref={(el) => { trafficInputRef = el }}
+                                className='h-8 text-sm'
+                              />
                             </div>
-                          </TooltipTrigger>
-                          <TooltipContent className='space-y-1'>
-                            <div className='text-xs'>
-                              <span className='font-medium'>已用: </span>
-                              {traffic.used_gb.toFixed(2)} GB
+                            <div className='space-y-1'>
+                              <Label className='text-xs'>统计服务器</Label>
+                              {probeServers.length > 0 ? (
+                                <div className='flex flex-wrap gap-1'>
+                                  {probeServers.map((srv) => {
+                                    const currentIds = file.stats_server_ids ? file.stats_server_ids.split(',').map(s => s.trim()).filter(Boolean) : []
+                                    const isSelected = currentIds.includes(srv.server_id)
+                                    return (
+                                      <Button
+                                        key={srv.server_id}
+                                        variant={isSelected ? 'default' : 'outline'}
+                                        size='sm'
+                                        className='h-6 text-xs px-2'
+                                        onClick={() => {
+                                          const newIds = isSelected
+                                            ? currentIds.filter(id => id !== srv.server_id)
+                                            : [...currentIds, srv.server_id]
+                                          updateMetadataMutation.mutate({
+                                            id: file.id,
+                                            data: {
+                                              name: file.name,
+                                              description: file.description,
+                                              stats_server_ids: newIds.join(','),
+                                              traffic_limit: file.traffic_limit ?? null,
+                                            }
+                                          }, {
+                                            onSuccess: () => {
+                                              queryClient.invalidateQueries({ queryKey: ['subscribe-traffic'] })
+                                            }
+                                          })
+                                        }}
+                                        disabled={updateMetadataMutation.isPending}
+                                      >
+                                        {srv.name}
+                                      </Button>
+                                    )
+                                  })}
+                                </div>
+                              ) : (
+                                <p className='text-xs text-muted-foreground'>未配置探针</p>
+                              )}
                             </div>
-                            <div className='text-xs'>
-                              <span className='font-medium'>总量: </span>
-                              {traffic.limit_gb.toFixed(2)} GB
-                            </div>
-                            <div className='text-xs'>
-                              <span className='font-medium'>剩余: </span>
-                              {remainingGB.toFixed(2)} GB
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
+                            <Button
+                              size='sm'
+                              className='w-full h-7 text-xs'
+                              disabled={updateMetadataMutation.isPending}
+                              onClick={() => {
+                                const val = trafficInputRef?.value ?? ''
+                                updateMetadataMutation.mutate({
+                                  id: file.id,
+                                  data: {
+                                    name: file.name,
+                                    description: file.description,
+                                    traffic_limit: val ? parseFloat(val) : null,
+                                    stats_server_ids: file.stats_server_ids,
+                                  }
+                                }, {
+                                  onSuccess: () => {
+                                    queryClient.invalidateQueries({ queryKey: ['subscribe-traffic'] })
+                                  }
+                                })
+                              }}
+                            >
+                              {updateMetadataMutation.isPending ? '保存中...' : '保存流量设置'}
+                            </Button>
+                          </PopoverContent>
+                        </Popover>
                       )
                     },
                     headerClassName: 'text-center',
                     cellClassName: 'text-center',
-                    width: '100px',
+                    width: '110px',
                   },
                   {
                     header: '操作',
