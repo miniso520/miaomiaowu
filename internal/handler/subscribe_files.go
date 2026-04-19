@@ -509,15 +509,16 @@ func (h *subscribeFilesHandler) handleUpdate(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if req.ExpireAt != nil {
-		expireAt, parseErr := parseExpireAt(req.ExpireAt)
-		if parseErr != nil {
-			writeBadRequest(w, "过期时间格式不正确，需为 RFC3339")
-			return
+		if *req.ExpireAt == "" {
+			existing.ExpireAt = nil
+		} else {
+			expireAt, parseErr := parseExpireAt(req.ExpireAt)
+			if parseErr != nil {
+				writeBadRequest(w, "过期时间格式不正确，需为 RFC3339")
+				return
+			}
+			existing.ExpireAt = expireAt
 		}
-		existing.ExpireAt = expireAt
-	} else {
-		// 为空时清除过期时间
-		existing.ExpireAt = nil
 	}
 
 	// 处理文件名更新
