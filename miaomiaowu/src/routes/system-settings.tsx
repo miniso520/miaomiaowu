@@ -106,7 +106,7 @@ function SystemSettingsPage() {
       setClientCompatibilityMode(userConfig.client_compatibility_mode || false)
       setSilentMode(userConfig.silent_mode || false)
       setSilentModeTimeout(userConfig.silent_mode_timeout || 15)
-      setNodeNameFilter(userConfig.node_name_filter || '剩余|流量|到期|订阅|时间|重置')
+      setNodeNameFilter(userConfig.node_name_filter ?? '剩余|流量|到期|订阅|时间|重置')
       setEnableSubInfoNodes(userConfig.enable_sub_info_nodes || false)
       setSubInfoExpirePrefix(userConfig.sub_info_expire_prefix || '📅过期时间')
       setSubInfoTrafficPrefix(userConfig.sub_info_traffic_prefix || '⌛剩余流量')
